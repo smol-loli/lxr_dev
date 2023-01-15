@@ -1,0 +1,18 @@
+[package]
+name = "lxr"
+version = "0.0.1"
+edition = "2021"
+authors = ["Kazuki <github@loli-chan.com>"]
+rust-version = "1.68.0"
+description = "lxr - Code editor purely made with Rust"
+readme = "README.md"
+homepage = "https://github.com/smol-loli/lxr_private/"
+repository = "https://github.com/smol-loli/lxr_private/"
+license = "MIT"
+keywords = ["code editor", "vim"]
+categories = ["editor"]
+exclude = ["/.idea", "./target", "lxr.iml"]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
