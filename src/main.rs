@@ -6,13 +6,14 @@ extern crate core;
 
 use std::arch::x86_64::_subborrow_u32;
 use std::array::TryFromSliceError;
+use std::cmp;
 use std::fmt::format;
-use std::{env, fs, io};
 use std::io::{stdout, Read, Write};
+use std::path::Path;
 use std::thread::current;
 use std::time::Duration;
-use std::cmp;
-use std::path::Path;
+use std::{env, fs, io};
+use std::cmp::Ordering;
 
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use crossterm::terminal::ClearType;
@@ -162,6 +163,7 @@ impl Output {
         execute!(stdout(), cursor::MoveTo(0, 0))
     }
 
+    // This is just disgustingly nested TODO: Cleanup fn draw_rows()
     fn draw_rows(&mut self) {
         let screen_rows = self.win_size.1;
         let screen_columns = self.win_size.0;
@@ -184,9 +186,20 @@ impl Output {
                     self.editor_contents.push('~');
                 }
             } else {
-                let len = cmp::min(self.editor_rows.get_row(file_row).len(), screen_columns);
-                self.editor_contents
-                    .push_str(&self.editor_rows.get_row(file_row)[..len])
+                let row = self.editor_rows.get_row(file_row);
+                let column_offset = self.cursor_controller.column_offset;
+                let len = if row.len() < column_offset {
+                    0
+                } else {
+                    let len = row.len() - column_offset;
+                    if len > screen_columns {
+                        screen_columns
+                    } else {
+                        len
+                    }
+                };
+                let start = if len == 0 { 0 } else { column_offset };
+                self.editor_contents.push_str(&row[start..start + len]);
             }
             queue!(
                 self.editor_contents,
@@ -209,7 +222,7 @@ impl Output {
             cursor::MoveTo(0, 0)
         )?;
         self.draw_rows();
-        let cursor_x = self.cursor_controller.cursor_x;
+        let cursor_x = self.cursor_controller.cursor_x - self.cursor_controller.column_offset;
         let cursor_y = self.cursor_controller.cursor_y - self.cursor_controller.row_offset;
         queue!(
             self.editor_contents,
@@ -220,7 +233,8 @@ impl Output {
     }
 
     fn move_cursor(&mut self, direction: KeyCode) {
-        self.cursor_controller.move_cursor(direction, self.editor_rows.number_of_rows());
+        self.cursor_controller
+            .move_cursor(direction, &self.editor_rows);
     }
 }
 
@@ -230,6 +244,7 @@ struct CursorController {
     screen_columns: usize,
     screen_rows: usize,
     row_offset: usize,
+    column_offset: usize,
 }
 
 impl CursorController {
@@ -240,10 +255,12 @@ impl CursorController {
             screen_columns: win_size.0,
             screen_rows: win_size.1,
             row_offset: 0,
+            column_offset: 0,
         }
     }
 
-    fn move_cursor(&mut self, direction: KeyCode, number_of_rows: usize) {
+    fn move_cursor(&mut self, direction: KeyCode, editor_rows: &EditorRows) {
+        let number_of_rows = editor_rows.number_of_rows();
         match direction {
             KeyCode::Up => {
                 self.cursor_y = self.cursor_y.saturating_sub(1);
@@ -251,6 +268,9 @@ impl CursorController {
             KeyCode::Left => {
                 if self.cursor_x != 0 {
                     self.cursor_x -= 1;
+                } else if self.cursor_y > 0 {
+                    self.cursor_y -= 1;
+                    self.cursor_x = editor_rows.get_row(self.cursor_y).len();
                 }
             }
             KeyCode::Down => {
@@ -259,8 +279,15 @@ impl CursorController {
                 }
             }
             KeyCode::Right => {
-                if self.cursor_x != self.screen_columns - 1 {
-                    self.cursor_x += 1;
+                if self.cursor_y < number_of_rows {
+                    match self.cursor_x.cmp(&editor_rows.get_row(self.cursor_y).len()) {
+                        Ordering::Less => self.cursor_x += 1,
+                        Ordering::Equal => {
+                            self.cursor_y += 1;
+                            self.cursor_x = 0
+                        }
+                        _ => {}
+                    }
                 }
             }
             KeyCode::End => self.cursor_x = self.screen_columns - 1,
@@ -268,12 +295,23 @@ impl CursorController {
             // TODO: Add CONTROL+HOME and CONTROL+END to jump to top and end of the whole file
             _ => unimplemented!(),
         }
+        let row_len = if self.cursor_y < number_of_rows {
+            editor_rows.get_row(self.cursor_y).len()
+        } else {
+            0
+        };
+        self.cursor_x = cmp::min(self.cursor_x, row_len);
     }
 
     fn scroll(&mut self) {
         self.row_offset = cmp::min(self.row_offset, self.cursor_y);
         if self.cursor_y >= self.row_offset + self.screen_rows {
             self.row_offset = self.cursor_y - self.screen_rows + 1;
+        }
+
+        self.column_offset = cmp::min(self.column_offset, self.cursor_x);
+        if self.cursor_x >= self.column_offset + self.screen_columns {
+            self.column_offset = self.cursor_x - self.screen_columns + 1;
         }
     }
 }
@@ -305,7 +343,7 @@ impl EditorRows {
         self.row_contents.len()
     }
 
-fn get_row(&self, at: usize) -> &str {
+    fn get_row(&self, at: usize) -> &str {
         &self.row_contents[at]
     }
 }
