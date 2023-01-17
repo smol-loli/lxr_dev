@@ -1,26 +1,25 @@
 //macros
-#![allow(unused)]
+//#![allow(unused)]
 
 //extern crates
 extern crate core;
 
-use std::arch::x86_64::_subborrow_u32;
-use std::array::TryFromSliceError;
+
+
 use std::cmp;
-use std::fmt::format;
-use std::io::{stdout, Read, Write};
+use std::io::{stdout, Write};
 use std::path::Path;
-use std::thread::current;
 use std::time::Duration;
 use std::{env, fs, io};
 use std::cmp::Ordering;
 
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use crossterm::terminal::ClearType;
-use crossterm::{cursor, event, execute, queue, terminal, ExecutableCommand};
+use crossterm::{cursor, event, execute, queue, terminal};
 
 //constants
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+const TAB_STOP: usize = 8;
 
 //Structs
 struct CleanUp;
@@ -171,7 +170,7 @@ impl Output {
             let file_row = i + self.cursor_controller.row_offset;
             if file_row >= self.editor_rows.number_of_rows() {
                 if self.editor_rows.number_of_rows() == 0 && i == screen_rows / 3 {
-                    let mut welcome = format!("lxr Editor --- Version {}", VERSION);
+                    let mut welcome = format!("lxr Editor --- Version {} (alpha)", VERSION);
                     if welcome.len() > screen_columns {
                         welcome.truncate(screen_columns)
                     }
@@ -186,7 +185,7 @@ impl Output {
                     self.editor_contents.push('~');
                 }
             } else {
-                let row = self.editor_rows.get_row(file_row);
+                let row = self.editor_rows.get_render(file_row);
                 let column_offset = self.cursor_controller.column_offset;
                 let len = if row.len() < column_offset {
                     0
@@ -317,7 +316,7 @@ impl CursorController {
 }
 
 struct EditorRows {
-    row_contents: Vec<Box<str>>,
+    row_contents: Vec<Row>,
 }
 
 impl EditorRows {
@@ -335,8 +334,23 @@ impl EditorRows {
     fn from_file(file: &Path) -> Self {
         let file_contents = fs::read_to_string(file).expect("Error reading from file");
         Self {
-            row_contents: file_contents.lines().map(|it| it.into()).collect(),
+            row_contents: file_contents
+                .lines()
+                .map(|it| {
+                    let mut row = Row::new(it.into(), String::new());
+                    Self::render_row(&mut row);
+                    row
+                })
+                .collect(),
         }
+    }
+
+    fn get_render(&self, at: usize) -> &String {
+        &self.row_contents[at].render
+    }
+
+    fn get_editor_row(&self, at: usize) -> &Row {
+        &self.row_contents[at]
     }
 
     fn number_of_rows(&self) -> usize {
@@ -344,9 +358,45 @@ impl EditorRows {
     }
 
     fn get_row(&self, at: usize) -> &str {
-        &self.row_contents[at]
+        &self.row_contents[at].row_content
+    }
+
+    fn render_row(row: &mut Row) {
+        let mut index = 0;
+        let capacity = row
+            .row_content
+            .chars()
+            .fold(0, |acc, next| acc + if next == '\t' {TAB_STOP} else {1});
+        row.render = String::with_capacity(capacity);
+        row.row_content.chars().for_each(|c| {
+            index += 1;
+            if c == '\t' {
+                row.render.push(' ');
+                while index % TAB_STOP != 0 {
+                    row.render.push(' ');
+                    index += 1;
+                }
+            } else {
+                row.render.push(c);
+            }
+        })
     }
 }
+
+struct Row {
+    row_content: Box<str>,
+    render: String,
+}
+
+impl Row {
+    fn new(row_content: Box<str>, render: String) -> Self {
+        Self {
+            row_content,
+            render,
+        }
+    }
+}
+
 
 fn main() -> crossterm::Result<()> {
     let _clean_up = CleanUp;
